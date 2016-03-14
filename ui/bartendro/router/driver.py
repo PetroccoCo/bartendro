@@ -19,7 +19,7 @@ except ImportError:
 
 #change this if you want to add more gpios / dispensers / valves / pumps
 #add all gpios here which are connected to a pump/valve, they will be numerated in the order of appearance
-GPIOOutputs = [22, 27, 17]
+GPIOOutputs = [17, 27, 22, 23, 24, 25]
 
 MOTOR_DIRECTION_FORWARD       = 1
 MOTOR_DIRECTION_BACKWARD      = 0
@@ -40,14 +40,14 @@ class Dispenser():
         self.dispensing_thread = DispenseForDurationThread(self, duration).start()
             
     def start_dispensing(self):
-        GPIO.output(self.gpio, GPIO.LOW)
+        GPIO.output(self.gpio, GPIO.HIGH)
         self.dispensing = True
         log.info("GPIO: " + str(self.gpio) + " start dispensing.\n")
         #todo error handling 
         return True
         
     def stop_dispensing(self):
-        GPIO.output(self.gpio, GPIO.HIGH)
+        GPIO.output(self.gpio, GPIO.LOW)
         self.dispensing = False
         log.info("GPIO: " + str(self.gpio) + " stop dispensing.\n")
         #todo error handling 
@@ -98,7 +98,7 @@ class RouterDriver(object):
         #define all gpios given in gpiooutputs as outputs
         for dispenser in self.dispensers:
             GPIO.setup(dispenser.get_gpio_number(), GPIO.OUT)
-            GPIO.output(dispenser.get_gpio_number(), GPIO.HIGH)
+            GPIO.output(dispenser.get_gpio_number(), GPIO.LOW)
 
         self._clear_startup_log()
 
