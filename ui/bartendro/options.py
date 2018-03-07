@@ -4,7 +4,6 @@ from bartendro import app, db
 from bartendro.model.option import Option
 from bartendro.model.shot_log import ShotLog
 from sqlalchemy.exc import OperationalError
-import types
 
 log = logging.getLogger('bartendro')
 
@@ -24,7 +23,7 @@ bartendro_options = {
     u'strength_steps'          : 2,
     u'use_shotbot_ui'          : False,
     u'show_feeling_lucky'      : False,
-    u'default_flowrate'        : 10.0
+    u'turbo_mode'              : False
 }
 
 class BadConfigOptionsError(Exception):
@@ -89,16 +88,14 @@ def load_options():
     options = Options()
     for o in db.session.query(Option).all():
         try:
-            if isinstance(bartendro_options[o.key], types.IntType):
+            if isinstance(bartendro_options[o.key], int):
                value = int(o.value)
-            elif isinstance(bartendro_options[o.key], types.UnicodeType):
+            elif isinstance(bartendro_options[o.key], unicode):
                value = unicode(o.value)
-            elif isinstance(bartendro_options[o.key], types.FloatType):
-               value = float(o.value)
-            elif isinstance(bartendro_options[o.key], types.BooleanType):
+            elif isinstance(bartendro_options[o.key], boolean):
                value = boolean(o.value)
             else:
-               raise BadConfigOptionsError
+                raise BadConfigOptionsError
         except KeyError:
             # Ignore options we don't understand
             pass

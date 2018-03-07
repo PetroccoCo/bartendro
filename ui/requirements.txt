@@ -1,0 +1,9 @@
+werkzeug
+jinja2
+wtforms
+sqlalchemy
+python-memcached
+flask
+flask-login
+flask-sqlalchemy
+pyserial

@@ -3,7 +3,6 @@ import logging
 import sys
 import traceback
 from time import sleep, time
-from decimal import *
 from threading import Thread
 from flask import Flask, current_app
 from flask.ext.sqlalchemy import SQLAlchemy
@@ -15,16 +14,19 @@ from bartendro.clean import CleanCycle
 from bartendro.pourcomplete import PourCompleteDelay
 from bartendro.router.driver import MOTOR_DIRECTION_FORWARD
 from bartendro.model.drink import Drink
-from bartendro.model.booze import Booze
-from bartendro.model.option import Option
+from bartendro.model.booze import BOOZE_TYPE_EXTERNAL
 from bartendro.model.dispenser import Dispenser
 from bartendro.model.drink_log import DrinkLog
 from bartendro.model.shot_log import ShotLog
 from bartendro.global_lock import BartendroLock
 from bartendro.error import BartendroBusyError, BartendroBrokenError, BartendroCantPourError, BartendroCurrentSenseError
 
-ML_PER_SECOND = 10.1
+TICKS_PER_ML = 2.78
+CALIBRATE_ML = 60 
+CALIBRATION_TICKS = TICKS_PER_ML * CALIBRATE_ML
 
+FULL_SPEED = 255
+HALF_SPEED = 166
 SLOW_DISPENSE_THRESHOLD = 20 # ml
 MAX_DISPENSE = 1000 # ml max dispense per call. Just for sanity. :)
 
@@ -239,33 +241,57 @@ class Mixer(object):
         return fsm.EVENT_LL_OK
 
     def _state_ready(self):
+        self.driver.set_status_color(0, 1, 0)
         return fsm.EVENT_DONE
 
     def _state_low(self):
+        self.driver.led_idle()
+        self.driver.set_status_color(1, 1, 0)
         return fsm.EVENT_DONE
 
     def _state_out(self):
+        self.driver.led_idle()
+        self.driver.set_status_color(1, 0, 0)
         return fsm.EVENT_DONE
 
+    # TODO: Make the hard out blink the status led
     def _state_hard_out(self):
+        self.driver.led_idle()
+        self.driver.set_status_color(1, 0, 0)
         return fsm.EVENT_DONE
 
     def _state_current_sense(self):
         return fsm.EVENT_DONE
 
     def _state_error(self):
+        self.driver.led_idle()
+        self.driver.set_status_color(1, 0, 0)
         return fsm.EVENT_DONE
 
     def _state_pouring(self):
+        self.driver.led_dispense()
+
         recipe = {}
         size = 0
         log_lines = {}
+        sql = "SELECT id FROM booze WHERE type = :d"
+        ext_booze_list = db.session.query("id") \
+                        .from_statement(sql) \
+                        .params(d=BOOZE_TYPE_EXTERNAL).all()
+        ext_boozes = {}
+        for booze in ext_booze_list:
+            ext_boozes[booze[0]] = 1
+
         dispensers = db.session.query(Dispenser).order_by(Dispenser.id).all()
         for booze_id in sorted(self.recipe.data.keys()):
-                       
+            # Skip external boozes
+            if booze_id in ext_boozes:
+                continue
+
             found = False
             for i in xrange(self.disp_count):
                 disp = dispensers[i]
+
 
                 if booze_id == disp.booze_id:
                     # if we're out of booze, don't consider this drink
@@ -284,11 +310,11 @@ class Mixer(object):
                     recipe[i] =  ml
                     size += ml
                     log_lines[i] = "  %-2d %-32s %d ml" % (i, "%s (%d)" % (disp.booze.name, disp.booze.id), ml)
-                    self.driver.set_motor_direction(i, MOTOR_DIRECTION_FORWARD)
+                    self.driver.set_motor_direction(i, MOTOR_DIRECTION_FORWARD);
                     continue
 
             if not found:
-                raise BartendroCantPourErro("Cannot make drink. I don't have the required booze: %d" % booze_id)
+                raise BartendroCantPourError("Cannot make drink. I don't have the required booze: %d" % booze_id)
 
         self._dispense_recipe(recipe)
 
@@ -312,17 +338,19 @@ class Mixer(object):
         for i in xrange(self.disp_count):
             if booze_id == dispensers[i].booze_id:
                 recipe[i] =  ml
-                self._dispense_recipe(recipe)
+                self._dispense_recipe(recipe, True)
                 break
 
         return fsm.EVENT_POUR_DONE
 
     def _state_pour_done(self):
+        self.driver.led_complete()
         PourCompleteDelay(self).start()
 
         return fsm.EVENT_POST_POUR_DONE
 
     def reset(self):
+        self.driver.led_idle()
         app.globals.set_state(fsm.STATE_START)
         self.do_event(fsm.EVENT_START)
 
@@ -395,6 +423,13 @@ class Mixer(object):
                         .from_statement(sql) \
                         .params(d=self.disp_count).all()
         boozes.extend(add_boozes)
+
+        # Load whatever external boozes we have and add them to this list
+        sql = "SELECT id FROM booze WHERE type = :d"
+        ext_boozes = db.session.query("id") \
+                        .from_statement(sql) \
+                        .params(d=BOOZE_TYPE_EXTERNAL).all()
+        boozes.extend(ext_boozes)
 
         booze_dict = {}
         for booze_id in boozes:
@@ -487,36 +522,21 @@ class Mixer(object):
 
         return ll_state
 
-    def _dispense_recipe(self, recipe):
+    def _dispense_recipe(self, recipe, always_fast = False):
 
         active_disp = []
-
         for disp in recipe:
             if not recipe[disp]:
                 continue
-            
-            #Here it is a lot of effort to get the flowrate but it seems to be the best position
-            
-            #first get the dispenser
-            dispenser = Dispenser.query.filter_by(id=int(disp)+1).first()
-            
-            #get the flowrate for the dispenser by finding the booze connected to the dispenser   
-            booze = Booze.query.filter_by(id=int(dispenser.booze_id)).first()        
-            flowrate = Decimal(booze.flowrate)
-            
-            
-            if flowrate < 0.0001:
-                #set default flowrate
-                flowrate = Decimal(Option.query.filter_by(key="default_flowrate").first().value)
-                
-            log.info("Booze %s with flowrate %3.2f ml/s" % (booze.name, flowrate))
-            
-            duration = Decimal(recipe[disp]) / flowrate
+            ticks = int(recipe[disp] * TICKS_PER_ML)
+            if recipe[disp] < SLOW_DISPENSE_THRESHOLD and not always_fast:
+                speed = HALF_SPEED 
+            else:
+                speed = FULL_SPEED 
 
-            self.driver.set_motor_direction(disp, MOTOR_DIRECTION_FORWARD)
-            
-            if not self.driver.dispense_time(disp, duration):
-                raise BartendroBrokenError("Dispense error. Dispense %d ml in duration %d s on dispenser %d failed." % (recipe[disp], duration, disp + 1))
+            self.driver.set_motor_direction(disp, MOTOR_DIRECTION_FORWARD);
+            if not self.driver.dispense_ticks(disp, ticks, speed):
+                raise BartendroBrokenError("Dispense error. Dispense %d ticks, speed %d on dispenser %d failed." % (ticks, speed, disp + 1))
 
             active_disp.append(disp)
             sleep(.01)
@@ -524,7 +544,7 @@ class Mixer(object):
         for disp in active_disp:
             while True:
                 (is_dispensing, over_current) = app.driver.is_dispensing(disp)
-                #log.debug("is_disp %d, over_cur %d" % (is_dispensing, over_current))
+                log.debug("is_disp %d, over_cur %d" % (is_dispensing, over_current))
 
                 # If we get errors here, try again. Running motors can cause noisy comm lines
                 if is_dispensing < 0 or over_current < 0:

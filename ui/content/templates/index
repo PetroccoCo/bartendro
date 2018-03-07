@@ -10,6 +10,16 @@
            <div class="span6">
            </div>
         </div>
+        {% if options.show_feeling_lucky %}
+          <div class="row-fluid">
+             {{ drink_div(lucky_drink_id, 1, "I'm feeling lucky!", 
+                          "<em>Make sure there is a cup under the spout, the drink will pour immediately!</em>", 
+                          [{ "name" : "Pour a random drink now"}],
+                         ) }}
+             <div class="span6">
+             </div>
+          </div>
+        {% endif %}
         {{ drink_table(top_drinks) }}
         <div style="clear: both"/>
         <h1>the wild side</h1>
@@ -34,7 +44,7 @@
 // defining flags
 var isCtrl = false;
 var isShift = false;
- 
+
 $(document).ready(function() {
     // action on key up
     $(document).keyup(function(e) {
@@ -66,17 +76,9 @@ $(document).ready(function() {
       {% if (loop.index0 % 2) == 0 %}
          <div class="row-fluid">
       {% endif %}
-      <div class="span6 menuitem">
-         <a class="btn btn-large btn-block drink-btn button-border
-         {% if drink.am_lucky %} btn-success {% else %} btn-warning {% endif %}" style="margin-bottom: 8px;" 
-                type="button" href="/drink/{{ drink.id }}{% if drink.am_lucky %}/go{% endif %}">{{ drink.name.name }}</a>
-         <div class="ingredients">
-            {% for ing in drink.ingredients %}
-               {{ ing.name }}{% if not loop.last %}, {% endif %}
-            {% endfor %}
-         </div>
-         <div>{{ drink.desc }}</div>
-      </div>
+
+      {{ drink_div(drink.id, drink.is_lucky, drink.name.name, drink.desc, drink.ingredients) }}
+
       {% if (loop.index0 % 2) == 1 %}
          </div> 
       {% endif %}
@@ -88,4 +90,17 @@ $(document).ready(function() {
           <div class="span6">&nbsp;</div>
        </div>
     {% endif %}
+{% endmacro %}
+{% macro drink_div(id, is_lucky, name, desc, ingredients) -%}
+    <div class="span6 menuitem">
+       <a class="btn btn-large btn-block drink-btn button-border
+       {% if is_lucky or options.turbo_mode %} btn-success {% else %} btn-warning {% endif %}" style="margin-bottom: 8px;" 
+              type="button" href="/drink/{{ id }}{% if is_lucky or options.turbo_mode %}/go{% endif %}">{{ name }}</a>
+       <div class="ingredients">
+          {% for ing in ingredients %}
+             {{ ing.name }}{% if not loop.last %}, {% endif %}
+          {% endfor %}
+       </div>
+       <div>{{ desc }}</div>
+    </div>
 {% endmacro %}
